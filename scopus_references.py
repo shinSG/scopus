@@ -10,6 +10,7 @@ import urllib2
 import logging
 import sys
 import traceback
+from threading import Thread
 
 
 BASE_URL = 'https://api.elsevier.com'
@@ -157,16 +158,44 @@ class ScopusAPI(object):
 
     def get_aggregate(self, references):
         global search_year
-        y = [ref for ref in references if ref.get('year') == search_year and ref.get('affiliation country')]
-        co = len([ref for ref in y if ref.get('affiliation country').lower() == 'china'])
-        nc = len([ref for ref in y2013 if 'china' not in ref.get('affiliation country').lower()])
+        year_count = [ref for ref in references if ref.get('year') == search_year and ref.get('affiliation country')]
+        co = len([ref for ref in year_count if ref.get('affiliation country').lower() == 'china'])
+        nc = len([ref for ref in year_count if 'china' not in ref.get('affiliation country').lower()])
         return {
-            'y2013': len(y2013),
+            'y2013': len(year_count),
             'co': co,
             'nc': nc
         }
 
+    def get_ref_info_for_export(self, rid, res_list=[], ref_info_list=[]):
+        ref_info = {}
+        res = []
+        try:
+            ref_info = self.get_ref_info(rid)
+            res = [''] * 21
+            res.extend([
+                ref_info.get('title') or ref_info.get('publicationName'),
+                ref_info.get('source-id'),
+                ref_info.get('eid'),
+                str(ref_info.get('year')),
+                ref_info.get('affiliation country'),
+                ref_info.get('subtypeDescription'),
+                ref_info.get('aggregationType'),
+                ref_info.get('subject arears'),
+                ref_info.get('citedby-count'),
+                ref_info.get('issn'),
+            ])
+            res = [s.encode('utf-8') for s in res]
+        except Exception as e:
+            logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
+            logging.error(traceback.format_exc())
+        return res, ref_info
+        # res_list.append(res)
+        # ref_info_list.append(ref_info)
+
     def get_ref(self, src_data, f_writer):
+        import time
+        st=time.time()
         eid = src_data[QUERY_FIELDS_INDEX.get('eid')]
         print eid
         if not eid:
@@ -177,29 +206,20 @@ class ScopusAPI(object):
         src_data.append(','.join(sub_fields))
         res_list = []
         ref_agg_list = []
-
+        thread_list = []
         for rid in ref_ids:
             try:
-                ref_info = self.get_ref_info(rid)
-                res = [''] * 21
-                res.extend([
-                    ref_info.get('title') or ref_info.get('publicationName'),
-                    ref_info.get('source-id'),
-                    ref_info.get('eid'),
-                    str(ref_info.get('year')),
-                    ref_info.get('affiliation country'),
-                    ref_info.get('subtypeDescription'),
-                    ref_info.get('aggregationType'),
-                    ref_info.get('subject arears'),
-                    ref_info.get('citedby-count'),
-                    ref_info.get('issn'),
-                ])
-                res = [s.encode('utf-8') for s in res]
+                # t = Thread(target=self.get_ref_info_for_export, args=(rid, res_list, ref_agg_list))
+                # thread_list.append(t)
+                res, ref_info = self.get_ref_info_for_export(rid)
                 res_list.append(res)
                 ref_agg_list.append(ref_info)
             except Exception as e:
                 logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
                 logging.error(traceback.format_exc())
+        # for th in thread_list:
+        #     th.start()
+        #     th.join()
         ref_agg = self.get_aggregate(ref_agg_list)
         agg_append = [''] * 10
         agg_append.extend([
@@ -215,6 +235,7 @@ class ScopusAPI(object):
             traceback.print_exc()
             logging.info('[%s]: %s' % (datetime.datetime.now(), src_data))
             logging.error(traceback.format_exc())
+        print time.time()-st
 
     def get_url(self, id, data_type):
         url = '/'.join([self.base_url, URL_MAPPING.get(data_type), id])

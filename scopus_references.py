@@ -1,36 +1,32 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import time
 import datetime
 import codecs
 import sys
 import csv
 import json
+import httplib
 import urllib2
 import logging
 import sys
 import traceback
+import argparse
 from threading import Thread
 
 
 BASE_URL = 'https://api.elsevier.com'
-API_KEY = ''
+API_KEY = [
+]
 
 URL_MAPPING = {
     'scopus_id': 'content/search/scopus',
-    'citations_overview': 'content/abstract/citations',
-    'citations_count': 'content/abstract/citation-count',
     'serial_title': 'content/serial/title',
     'ref_id': 'content/abstract/eid',
     'scopus': 'content/abstract/scopus_id'
 }
 
-FUNC_MAPPING = {
-    'citations_overview': 'get_citations_overview',
-    'citations_count': 'get_citations_count',
-    'serial_title': 'get_serial_title',
-    'references': 'get_ref',
-}
 
 QUERY_FIELDS_INDEX = {
     'doi': 11,
@@ -50,12 +46,15 @@ FIELDS = [
     'citations_overview'
 ]
 
+current_key_index = 0
+
 HEADERS = {
-    'X-ELS-APIKey': API_KEY,
+    'X-ELS-APIKey': API_KEY[current_key_index],
     'Accept': 'application/json'
 }
 
-search_year = 2013
+search_year = None
+# only_search = False
 
 logging.basicConfig(filename='err.log', level=logging.DEBUG)
 
@@ -65,16 +64,51 @@ class ScopusAPI(object):
         self.base_url = BASE_URL
         self.csv_file = open(filename, 'r')
         self.reader = csv.reader(self.csv_file)
-        self.result_file = open('result.csv', 'w')
+        result_file_name = filename.split('.')[0] + '-result.csv'
+        self.result_file = open(result_file_name, 'w')
         self.headers = HEADERS
         self.req = urllib2.Request(self.base_url, headers=self.headers)
         self.title = []
 
-    def get_resp(self, url):
+    def get_res(self, url):
         req = urllib2.Request(url=url, headers=self.headers)
         res = urllib2.urlopen(req)
-        if res.code == 200:
-            return json.loads(res.read())
+        return res
+
+    def get_resp(self, url):
+        count = 0
+        while count < 3:
+            count += 1
+            try:
+                res = self.get_res(url)
+                if res.code == 200:
+                    try:
+                        return json.loads(res.read())
+                    except httplib.IncompleteRead as e:
+                        logging.error(traceback.format_exc())
+                        continue
+            except urllib2.HTTPError as e:
+                logging.error(traceback.format_exc())
+                print e
+                global current_key_index
+                self.headers['X-ELS-APIKey'] = API_KEY[current_key_index + 1]
+
+        # try:
+        #     res = self.get_res(url)
+        #     if res.code == 200:
+        #         try:
+        #             data = res.read()
+        #         except httplib.IncompleteRead as e:
+        #             data = e.partial
+        #         return json.loads(data)
+        # except urllib2.HTTPError as e:
+        #     logging.error(traceback.format_exc())
+        #     print e
+        #     global current_key_index
+        #     self.headers['X-ELS-APIKey'] = API_KEY[current_key_index + 1]
+        #     res = self.get_res(url)
+        #     if res.code == 200:
+        #         return json.loads(res.read())
         return None
 
     def load_data(self):
@@ -122,6 +156,12 @@ class ScopusAPI(object):
             aff_country = ','.join(list(set([aff.get('affiliation-country') for aff in affiliation])))
             core_data = data.get('coredata', {})
             sub_fields = ','.join(self.get_sub_areas(data))
+            ref_year = 1900
+            try:
+                ref_year = datetime.datetime.strptime(core_data.get('prism:coverDate', ''), '%Y-%m-%d').year
+            except ValueError as e:
+                logging.info('[date error] %s' % core_data)
+                logging.error(traceback.format_exc())
             ref_info = {
                 'affiliation country': aff_country,
                 'subject arears': sub_fields,
@@ -129,7 +169,7 @@ class ScopusAPI(object):
                 'issueIdentifier': core_data.get('issueIdentifier', 0),
                 'eid': core_data.get('eid', ''),
                 'coverDate': core_data.get('prism:coverDate', ''),
-                'year': datetime.datetime.strptime(core_data.get('prism:coverDate', ''), '%Y-%m-%d').year,
+                'year': ref_year,
                 'aggregationType': core_data.get('prism:aggregationType', ''),
                 'url': core_data.get('prism:url', ''),
                 'subtype': core_data.get('subtype', ''),
@@ -158,7 +198,8 @@ class ScopusAPI(object):
 
     def get_aggregate(self, references):
         global search_year
-        year_count = [ref for ref in references if ref.get('year') == search_year and ref.get('affiliation country')]
+        s_year = search_year or 2013
+        year_count = [ref for ref in references if ref.get('year') == s_year and ref.get('affiliation country')]
         co = len([ref for ref in year_count if ref.get('affiliation country').lower() == 'china'])
         nc = len([ref for ref in year_count if 'china' not in ref.get('affiliation country').lower()])
         return {
@@ -167,7 +208,7 @@ class ScopusAPI(object):
             'nc': nc
         }
 
-    def get_ref_info_for_export(self, rid, res_list=[], ref_info_list=[]):
+    def get_ref_info_for_export(self, rid, res_list, ref_info_list):
         ref_info = {}
         res = []
         try:
@@ -189,13 +230,10 @@ class ScopusAPI(object):
         except Exception as e:
             logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
             logging.error(traceback.format_exc())
-        return res, ref_info
-        # res_list.append(res)
-        # ref_info_list.append(ref_info)
+        res_list.append(res)
+        ref_info_list.append(ref_info)
 
     def get_ref(self, src_data, f_writer):
-        import time
-        st=time.time()
         eid = src_data[QUERY_FIELDS_INDEX.get('eid')]
         print eid
         if not eid:
@@ -209,17 +247,17 @@ class ScopusAPI(object):
         thread_list = []
         for rid in ref_ids:
             try:
-                # t = Thread(target=self.get_ref_info_for_export, args=(rid, res_list, ref_agg_list))
-                # thread_list.append(t)
-                res, ref_info = self.get_ref_info_for_export(rid)
-                res_list.append(res)
-                ref_agg_list.append(ref_info)
+                t = Thread(target=self.get_ref_info_for_export, args=(rid, res_list, ref_agg_list))
+                t.start()
+                thread_list.append(t)
             except Exception as e:
                 logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
                 logging.error(traceback.format_exc())
-        # for th in thread_list:
-        #     th.start()
-        #     th.join()
+        for th in thread_list:
+            try:
+                th.join()
+            except IndexError as e:
+                continue
         ref_agg = self.get_aggregate(ref_agg_list)
         agg_append = [''] * 10
         agg_append.extend([
@@ -235,7 +273,6 @@ class ScopusAPI(object):
             traceback.print_exc()
             logging.info('[%s]: %s' % (datetime.datetime.now(), src_data))
             logging.error(traceback.format_exc())
-        print time.time()-st
 
     def get_url(self, id, data_type):
         url = '/'.join([self.base_url, URL_MAPPING.get(data_type), id])
@@ -283,24 +320,21 @@ class ScopusAPI(object):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print '请输入源文件名 格式：python scopus_references.py {源文件名} {起始行} {结束行}'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--file', type=str, help='file name')
+    parser.add_argument('--start', type=int, help='start line')
+    parser.add_argument('--end', type=int, help='end line')
+    parser.add_argument('--year', type=int, help='count year')
+    args = parser.parse_args()
+    src_file = args.file
+    start = args.start
+    end = args.end
+    input_year = args.year
+    if not src_file:
+        print 'please input filename'
     else:
-        src_file = sys.argv[1]
-        start = 1
-        end = None
-        year = 2013
-        try:
-            if len(sys.argv) >= 3:
-                start = int(sys.argv[2])
-            if len(sys.argv) >= 4:
-                end = int(sys.argv[3])
-        except:
-            print '输入行数错误'
-
-        if len(sys.argv) >= 5:
-            global search_year
-            search_year = int(sys.argv[4])
+        global search_year
+        search_year = int(input_year or 2013)
 
         query_type = 'references'
         sapi = ScopusAPI(src_file)

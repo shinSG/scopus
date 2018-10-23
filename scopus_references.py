@@ -115,8 +115,7 @@ TITLE_MAPPING = {
         'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
     ],
     'author': [
-        'subject fields', 'ref:title', 'source id', 'ref:EID', 'Year', 'Affiliation Country', 'SubType',
-        'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
+        'Author ID', 'document-count', 'cited-by-count', 'citation-count', 'Publiction Start', 'Publiction End', 'SubType',
     ]
 }
 
@@ -219,35 +218,6 @@ class ScopusAPI(object):
         li = eid.split('0-')
         scopus_id = li[-1] if len(li) == 2 else ''
         return scopus_id
-
-    # def run(self, data_type, start_num=1, end_num=None):
-    #     ori_data = self.load_data()
-    #     with self.result_file as f:
-    #         f.write(codecs.BOM_UTF8)
-    #         writer = csv.writer(f)
-    #         w_title = False
-    #         count = 0
-    #         for line in ori_data:
-    #             if not w_title:
-    #                 self.title.extend(TITLE_MAPPING[data_type])
-    #                 global search_year
-    #                 for x in search_year:
-    #                     self.title.extend(['Y' + x, 'CO', 'NC'])
-    #                 writer.writerow(self.title)
-    #                 w_title = True
-    #             count += 1
-    #             if start_num > 1:
-    #                 if count < start_num:
-    #                     continue
-    #             if end_num:
-    #                 if count > end_num:
-    #                     break
-    #             if data_type == 'references':
-    #                 self.get_ref(line, writer)
-    #             if data_type == 'serial_title':
-    #                 self.get_serial_title('issn', line)
-    #             if data_type == 'author':
-    #                 self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
 
 
 class SerialTitleSearch(ScopusAPI):
@@ -457,7 +427,13 @@ class AuthorSearch(ScopusAPI):
             return []
         bibrecord = self.get_scoups_bibrecord(article_data)
         head = bibrecord.get('head', {})
-        authors = head.get('author-group', {}).get('author', []) or []
+        author_group = head.get('author-group', {})
+        authors = []
+        if isinstance(author_group, dict):
+            authors = author_group.get('author', []) or []
+        if isinstance(author_group, list):
+            for ag in author_group:
+                authors.extend(ag.get('author', []) or [])
         # au_list = []
         # for item in authors:
         #     au_list.extend(item.get('author', []))
@@ -483,7 +459,6 @@ class AuthorSearch(ScopusAPI):
             author_profile = au_data.get('author-profile', {})
             publication_range = author_profile.get('publication-range', {})
             preferred_name = author_profile.get('preferred-name', {})
-            print preferred_name
             author_info = {
                 'eid': core_data.get('eid', ''),
                 'document-count': core_data.get('document-count', ''),
@@ -500,36 +475,78 @@ class AuthorSearch(ScopusAPI):
         return author_info
 
     def get_authors_by_scopus_eid(self, eid):
+        print eid
         resp = self.get_article_info_by_eid(eid)
         results = []
-        if resp:
-            auids = self.get_authors_from_article(resp)
-            for auid in auids:
-                results.append(self.get_author_info(auid))
+        if not resp:
+            return results
+        auids = self.get_authors_from_article(resp)
+        thread_list = []
+        count = 0
+        for auid in auids:
+            # self.get_author_info(auid, results)
+            count += 1
+            if count % 5 == 0:
+                time.sleep(1)
+            if not auid:
+                continue
+            try:
+                t = Thread(target=self.get_author_info, args=(auid, results))
+                t.setDaemon(True)
+                t.start()
+                thread_list.append(t)
+            except Exception as e:
+                logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), eid, e))
+                logging.error(traceback.format_exc())
+        for th in thread_list:
+            try:
+                th.join()
+            except IndexError as e:
+                continue
         return results
 
-    def get_author_info(self, author_id):
+    def get_author_info(self, author_id, res_list):
         if not author_id:
             return
         profile = self.get_author_profile(author_id)
-        publications = self.get_author_scopus_info(author_id)
-        print profile
-        print '####'
-        print publications
-        return {
-            'profile': profile,
-            'publications': publications,
-        }
+        # publications = self.get_author_scopus_info(author_id)
+        # return {
+        #     'profile': profile,
+        #     'publications': publications,
+        # }
+        res = [''] * 20
+        try:
+            res.extend([
+                profile.get('dc:identifier', ''),
+                profile.get('document-count', ''),
+                profile.get('cited-by-count', ''),
+                profile.get('citation-count', ''),
+                profile.get('pub_start', ''),
+                profile.get('pub_end', ''),
+                ';'.join(profile.get('sub_areas', [])),
+            ])
+            res = [s.encode('utf-8') for s in res]
+        except Exception as e:
+            logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
+            logging.error(traceback.format_exc())
+        res_list.append(res)
+        return res_list
 
     def get_author_scopus_info(self, author_id):
         query_str = '?query=AU-ID(%s)&field=dc:identifier,prism:coverDisplayDate' % author_id
         url = self.get_url('', 'ScopusSearch') + query_str
         resp = self.get_resp(url)
-        print resp
         return resp
 
     def get_data(self, data, writer):
-        self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')])
+        res_list = self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')])
+        try:
+            writer.writerow(data)
+            writer.writerows(res_list)
+        except Exception as e:
+            traceback.print_exc()
+            logging.info('[%s]: %s' % (datetime.datetime.now(), src_data))
+            logging.error(traceback.format_exc())
 
 
 class Search(object):
@@ -572,9 +589,10 @@ class Search(object):
             for line in ori_data:
                 if not w_title:
                     self.title.extend(TITLE_MAPPING[self.data_type])
-                    global search_year
-                    for x in search_year:
-                        self.title.extend(['Y' + x, 'CO', 'NC'])
+                    if self.data_type == 'references':
+                        global search_year
+                        for x in search_year:
+                            self.title.extend(['Y' + x, 'CO', 'NC'])
                     writer.writerow(self.title)
                     w_title = True
                 count += 1

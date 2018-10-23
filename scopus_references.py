@@ -1,17 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import re
 import time
 import datetime
 import codecs
-import sys
 import csv
 import json
 import httplib
 import urllib2
-from Queue import Queue
 import logging
-import sys
 import traceback
 import argparse
 import random
@@ -96,10 +94,11 @@ API_KEY = [
 ]
 
 URL_MAPPING = {
-    'ScopusSearch': 'content/search/scopus',
+    # 'ScopusSearch': 'content/search/scopus',
     'serial_title': 'content/serial/title',
     'article_eid': 'content/abstract/eid',
-    'AbstractScopus': 'content/abstract/scopus_id',
+    # 'AbstractScopus': 'content/abstract/scopus_id',
+    'ScopusSearch': 'content/abstract/scopus_id',
     'AuthorSearch': 'content/author/author_id'
 }
 
@@ -112,6 +111,10 @@ QUERY_FIELDS_INDEX = {
 
 TITLE_MAPPING = {
     'references': [
+        'subject fields', 'ref:title', 'source id', 'ref:EID', 'Year', 'Affiliation Country', 'SubType',
+        'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
+    ],
+    'author': [
         'subject fields', 'ref:title', 'source id', 'ref:EID', 'Year', 'Affiliation Country', 'SubType',
         'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
     ]
@@ -139,48 +142,17 @@ mutex = RLock()
 
 
 class ScopusAPI(object):
-    def __init__(self, filename, start, end):
+    def __init__(self):
         self.base_url = BASE_URL
-        self.csv_file = open(filename, 'r')
-        self.reader = csv.reader(self.csv_file)
-        suffix = str(start) if start else '1'
-        if end:
-            suffix += '-' + str(end)
-        result_file_name = filename.split('.')[0] + '-' + suffix + '-result.csv'
-        self.result_file = open(result_file_name, 'w')
         self.headers = HEADERS
-        self.opener = urllib2.build_opener(urllib2.HTTPHandler)
-        self.title = []
-        self.queue = Queue()
+
+    def get_data(self, data, writer):
+        pass
 
     def get_article_info_by_eid(self, eid):
         url = self.get_url(eid, 'article_eid')
         resp = self.get_resp(url)
         return resp
-
-    # author相关
-    def get_authors_from_article(self, article_data):
-        if not article_data:
-            return []
-        bibrecord = self.get_scoups_bibrecord(article_data)
-        head = bibrecord.get('head', {})
-        authors = head.get('author-group', []) or []
-        au_list = []
-        for item in authors:
-            au_list.extend(item.get('author', []))
-        auid_list = [au.get('@auid') for au in au_list if au and isinstance(au, dict)]
-        return auid_list
-
-    def get_authors_by_eid(self, eid):
-        resp = self.get_article_info_by_eid(eid)
-        if resp:
-            authors = self.get_authors_from_article(resp)
-        return authors
-
-    def get_scopus_by_authors(self, author_id):
-        query_str = '?query=AU-ID(%s)&field=dc:identifier,prism:coverDisplayDate' % author_id
-        url = self.get_url('', 'ScopusSearch') + query_type
-        # resp
 
     def get_res(self, url):
         res = None
@@ -206,7 +178,6 @@ class ScopusAPI(object):
             except urllib2.HTTPError as e:
                 mutex.acquire()
                 logging.error('[%s]: %s' % (datetime.datetime.now(), traceback.format_exc()))
-                print e
                 global current_key_index, used_token_index
                 while current_key_index in used_token_index:
                     current_key_index = random.randint(0, len(API_KEY) - 1)
@@ -216,13 +187,6 @@ class ScopusAPI(object):
             except:
                 traceback.print_exc()
         return None
-
-    def load_data(self):
-        for line in self.reader:
-            if self.reader.line_num == 1:
-                self.title = line
-                continue
-            yield line
 
     @classmethod
     def get_sub_areas(cls, data):
@@ -247,12 +211,65 @@ class ScopusAPI(object):
         bibrecord = data_item.get('bibrecord', {}) or {}
         return bibrecord
 
+    def get_url(self, id='', data_type='ScopusSearch'):
+        url = '/'.join([self.base_url, URL_MAPPING.get(data_type), id])
+        return url
+
+    def get_scopus_id_by_eid(self, eid):
+        li = eid.split('0-')
+        scopus_id = li[-1] if len(li) == 2 else ''
+        return scopus_id
+
+    # def run(self, data_type, start_num=1, end_num=None):
+    #     ori_data = self.load_data()
+    #     with self.result_file as f:
+    #         f.write(codecs.BOM_UTF8)
+    #         writer = csv.writer(f)
+    #         w_title = False
+    #         count = 0
+    #         for line in ori_data:
+    #             if not w_title:
+    #                 self.title.extend(TITLE_MAPPING[data_type])
+    #                 global search_year
+    #                 for x in search_year:
+    #                     self.title.extend(['Y' + x, 'CO', 'NC'])
+    #                 writer.writerow(self.title)
+    #                 w_title = True
+    #             count += 1
+    #             if start_num > 1:
+    #                 if count < start_num:
+    #                     continue
+    #             if end_num:
+    #                 if count > end_num:
+    #                     break
+    #             if data_type == 'references':
+    #                 self.get_ref(line, writer)
+    #             if data_type == 'serial_title':
+    #                 self.get_serial_title('issn', line)
+    #             if data_type == 'author':
+    #                 self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
+
+
+class SerialTitleSearch(ScopusAPI):
+    def get_serial_title(self, query_field, line):
+        query = line[QUERY_FIELDS_INDEX.get(query_field)]
+        url = '/'.join([self.base_url, URL_MAPPING['serial_title']]) + '?' + 'issn=' + query
+        req = urllib2.Request(url=url, headers=self.headers)
+        res = urllib2.urlopen(req)
+        data = ''
+        if res.code == 200:
+            resp = json.loads(res.read())
+            data = resp.get('serial-metadata-response', {}) or {}
+            data = data.get('entry')
+        return data
+
+
+class ReferenceSearch(ScopusAPI):
     def get_ref_list_by_eid(self, resp_data):
         def get_id(item):
             try:
                 d = item.get('ref-info', {}).get('refd-itemidlist', {}).get('itemid', {})
                 if isinstance(d, list):
-                    import re
                     for i in d:
                         if re.match(r'[0-9]', i.get('$')):
                             d = i
@@ -268,7 +285,7 @@ class ScopusAPI(object):
         bibliography = tail_data.get('bibliography', {}) or tail_data
         reference = bibliography.get('reference', [])
         ref_ids = [get_id(item) for item in reference]
-        sub_fields = self.get_sub_areas(data)
+        sub_fields = self.get_sub_areas(bibliography)
         return {'sub_fields': sub_fields, 'ref_ids': ref_ids}
 
     def get_ref_ids_by_eid(self, eid):
@@ -329,6 +346,7 @@ class ScopusAPI(object):
 
     def get_scopus_info(self, scopus_id):
         url = self.get_url(scopus_id, 'ScopusSearch')
+        print url
         return self.get_resp(url)
 
     def get_aggregate(self, references):
@@ -409,6 +427,7 @@ class ScopusAPI(object):
                 th.join()
             except IndexError as e:
                 continue
+            # self.get_ref_info_for_export(rid, res_list, ref_agg_list)
         ref_agg = self.get_aggregate(ref_agg_list)
         agg_append = [''] * 10
         global search_year
@@ -428,29 +447,122 @@ class ScopusAPI(object):
             logging.info('[%s]: %s' % (datetime.datetime.now(), src_data))
             logging.error(traceback.format_exc())
 
-    def get_url(self, id='', data_type='ScopusSearch'):
-        url = '/'.join([self.base_url, URL_MAPPING.get(data_type), id])
-        return url
-
-    def get_scopus_id_by_eid(self, eid):
-        li = eid.split('0-')
-        scopus_id = li[-1] if len(li) == 2 else ''
-        return scopus_id
-
-    def get_serial_title(self, query_field, line):
-        query = line[QUERY_FIELDS_INDEX.get(query_field)]
-        url = '/'.join([self.base_url, URL_MAPPING['serial_title']]) + '?' + 'issn=' + query
-        req = urllib2.Request(url=url, headers=self.headers)
-        res = urllib2.urlopen(req)
-        data = ''
-        if res.code == 200:
-            resp = json.loads(res.read())
-            data = resp.get('serial-metadata-response', {}) or {}
-            data = data.get('entry')
-        return data
+    def get_data(self, data, writer):
+        self.get_ref(data, writer)
 
 
-    def run(self, data_type, start_num=1, end_num=None):
+class AuthorSearch(ScopusAPI):
+    def get_authors_from_article(self, article_data):
+        if not article_data:
+            return []
+        bibrecord = self.get_scoups_bibrecord(article_data)
+        head = bibrecord.get('head', {})
+        authors = head.get('author-group', {}).get('author', []) or []
+        # au_list = []
+        # for item in authors:
+        #     au_list.extend(item.get('author', []))
+        auid_list = [au.get('@auid') if au and isinstance(au, dict) else '' for au in authors]
+        return auid_list
+
+    def get_author_profile(self, author_id):
+        if not author_id:
+            return {}
+        url = self.get_url(author_id, 'AuthorSearch')
+        resp = self.get_resp(url)
+        return self.get_author_profile_data(resp)
+
+    def get_author_profile_data(self, author_data):
+        author_info = {}
+        if not author_data:
+            return {}
+        ar_resp = author_data.get('author-retrieval-response', [])
+        if len(ar_resp) == 1:
+            au_data = ar_resp[0]
+            core_data = au_data.get('coredata', {})
+            sub_area_list = self.get_sub_areas(au_data)
+            author_profile = au_data.get('author-profile', {})
+            publication_range = author_profile.get('publication-range', {})
+            preferred_name = author_profile.get('preferred-name', {})
+            print preferred_name
+            author_info = {
+                'eid': core_data.get('eid', ''),
+                'document-count': core_data.get('document-count', ''),
+                'cited-by-count': core_data.get('cited-by-count', ''),
+                'citation-count': core_data.get('citation-count', ''),
+                'dc:identifier': core_data.get('dc:identifier', ':').split(':')[1],
+                'sub_areas': sub_area_list,
+                'pub_start': publication_range.get('@start', ''),
+                'pub_end': publication_range.get('@end', ''),
+                'first_name': preferred_name.get('given-name', ''),
+                'last_name': preferred_name.get('surname', ''),
+                'index_name': preferred_name.get('indexed-name', ''),
+            }
+        return author_info
+
+    def get_authors_by_scopus_eid(self, eid):
+        resp = self.get_article_info_by_eid(eid)
+        results = []
+        if resp:
+            auids = self.get_authors_from_article(resp)
+            for auid in auids:
+                results.append(self.get_author_info(auid))
+        return results
+
+    def get_author_info(self, author_id):
+        if not author_id:
+            return
+        profile = self.get_author_profile(author_id)
+        publications = self.get_author_scopus_info(author_id)
+        print profile
+        print '####'
+        print publications
+        return {
+            'profile': profile,
+            'publications': publications,
+        }
+
+    def get_author_scopus_info(self, author_id):
+        query_str = '?query=AU-ID(%s)&field=dc:identifier,prism:coverDisplayDate' % author_id
+        url = self.get_url('', 'ScopusSearch') + query_str
+        resp = self.get_resp(url)
+        print resp
+        return resp
+
+    def get_data(self, data, writer):
+        self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')])
+
+
+class Search(object):
+    def __init__(self, filename, start, end, query='reference'):
+        self.base_url = BASE_URL
+        self.csv_file = open(filename, 'r')
+        self.reader = csv.reader(self.csv_file)
+        suffix = str(start) if start else '1'
+        if end:
+            suffix += '-' + str(end)
+        result_file_name = '-'.join([filename.split('.')[0], suffix, query, 'result.csv'])
+        self.result_file = open(result_file_name, 'w')
+        self.title = []
+        self.data_type = query
+        self.start_line = start
+        self.end_line = end
+        if query == 'references':
+            # self.get_ref(line, writer)
+            self.api = ReferenceSearch()
+        # if data_type == 'serial_title':
+        #     self.get_serial_title('issn', line)
+        if query == 'author':
+            # self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
+            self.api = AuthorSearch()
+
+    def load_data(self):
+        for line in self.reader:
+            if self.reader.line_num == 1:
+                self.title = line
+                continue
+            yield line
+
+    def run(self):
         ori_data = self.load_data()
         with self.result_file as f:
             f.write(codecs.BOM_UTF8)
@@ -459,25 +571,26 @@ class ScopusAPI(object):
             count = 0
             for line in ori_data:
                 if not w_title:
-                    self.title.extend(TITLE_MAPPING[data_type])
+                    self.title.extend(TITLE_MAPPING[self.data_type])
                     global search_year
                     for x in search_year:
                         self.title.extend(['Y' + x, 'CO', 'NC'])
                     writer.writerow(self.title)
                     w_title = True
                 count += 1
-                if start_num > 1:
-                    if count < start_num:
+                if self.start_line > 1:
+                    if count < self.start_line:
                         continue
-                if end_num:
-                    if count > end_num:
+                if self.end_line:
+                    if count > self.end_line:
                         break
-                if data_type == 'references':
-                    self.get_ref(line, writer)
-                if data_type == 'serial_title':
-                    self.get_serial_title('issn', line)
-                if data_type == 'author':
-                    self.get_authors_by_eid(line[QUERY_FIELDS_INDEX.get('eid')])
+                self.api.get_data(line, writer)
+                # if data_type == 'references':
+                #     self.get_ref(line, writer)
+                # if data_type == 'serial_title':
+                #     self.get_serial_title('issn', line)
+                # if data_type == 'author':
+                #     self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
 
 
 if __name__ == '__main__':
@@ -492,12 +605,12 @@ if __name__ == '__main__':
     start = args.start
     end = args.end
     query_type = args.type or 'references'
-    input_year = args.year.split(',')
+    input_year = args.year.split(',') if args.year else ['2013']
     if not src_file:
         print 'please input filename'
     else:
         global search_year
         search_year = input_year or [2013]
 
-        sapi = ScopusAPI(src_file, start, end)
-        sapi.run(query_type, start, end)
+        sapi = Search(src_file, start, end, query_type)
+        sapi.run()

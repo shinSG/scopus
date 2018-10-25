@@ -114,8 +114,13 @@ TITLE_MAPPING = {
         'subject fields', 'ref:title', 'source id', 'ref:EID', 'Year', 'Affiliation Country', 'SubType',
         'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
     ],
-    'author': [
+    'author_info': [
         'Author ID', 'document-count', 'cited-by-count', 'citation-count', 'Publiction Start', 'Publiction End', 'SubType',
+        'Affiliation Country Current', 'Affiliation Country History'
+    ],
+    'author_citation': [
+        'Author ID', 'document-count', 'cited-by-count', 'citation-count', 'Publiction Start', 'Publiction End', 'SubType',
+        'Affiliation Country Current', 'Affiliation Country History'
     ]
 }
 
@@ -316,7 +321,6 @@ class ReferenceSearch(ScopusAPI):
 
     def get_scopus_info(self, scopus_id):
         url = self.get_url(scopus_id, 'ScopusSearch')
-        print url
         return self.get_resp(url)
 
     def get_aggregate(self, references):
@@ -327,7 +331,7 @@ class ReferenceSearch(ScopusAPI):
             co = len([ref for ref in year_count if ref.get('affiliation country').lower() == 'china'])
             nc = len([ref for ref in year_count if 'china' not in ref.get('affiliation country').lower()])
             ret.update({
-                s_year:{
+                s_year: {
                     'target_year': len(year_count),
                     'co': co,
                     'nc': nc
@@ -397,7 +401,6 @@ class ReferenceSearch(ScopusAPI):
                 th.join()
             except IndexError as e:
                 continue
-            # self.get_ref_info_for_export(rid, res_list, ref_agg_list)
         ref_agg = self.get_aggregate(ref_agg_list)
         agg_append = [''] * 10
         global search_year
@@ -434,11 +437,21 @@ class AuthorSearch(ScopusAPI):
         if isinstance(author_group, list):
             for ag in author_group:
                 authors.extend(ag.get('author', []) or [])
-        # au_list = []
-        # for item in authors:
-        #     au_list.extend(item.get('author', []))
         auid_list = [au.get('@auid') if au and isinstance(au, dict) else '' for au in authors]
         return auid_list
+
+    def get_aff_country(self, profile):
+        def get_aff_country(aff):
+            if isinstance(aff, dict):
+                return aff.get('ip-doc', {}).get('address', {}).get('country', '')
+            if isinstance(aff, list):
+                return ','.join(list(set([item.get('ip-doc', {}).get('address', {}).get('country', '') for item in aff])))
+            return ''
+
+        return {
+            'current': get_aff_country(profile.get('affiliation-current', {}).get('affiliation')),
+            'history': get_aff_country(profile.get('affiliation-history', {}).get('affiliation'))
+        }
 
     def get_author_profile(self, author_id):
         if not author_id:
@@ -459,6 +472,7 @@ class AuthorSearch(ScopusAPI):
             author_profile = au_data.get('author-profile', {})
             publication_range = author_profile.get('publication-range', {})
             preferred_name = author_profile.get('preferred-name', {})
+            aff_info = self.get_aff_country(author_profile)
             author_info = {
                 'eid': core_data.get('eid', ''),
                 'document-count': core_data.get('document-count', ''),
@@ -471,6 +485,8 @@ class AuthorSearch(ScopusAPI):
                 'first_name': preferred_name.get('given-name', ''),
                 'last_name': preferred_name.get('surname', ''),
                 'index_name': preferred_name.get('indexed-name', ''),
+                'affilication-history': aff_info.get('current', ''),
+                'affilication-current': aff_info.get('history', ''),
             }
         return author_info
 
@@ -484,7 +500,6 @@ class AuthorSearch(ScopusAPI):
         thread_list = []
         count = 0
         for auid in auids:
-            # self.get_author_info(auid, results)
             count += 1
             if count % 5 == 0:
                 time.sleep(1)
@@ -524,6 +539,8 @@ class AuthorSearch(ScopusAPI):
                 profile.get('pub_start', ''),
                 profile.get('pub_end', ''),
                 ';'.join(profile.get('sub_areas', [])),
+                profile.get('affilication-current', []),
+                profile.get('affilication-history', []),
             ])
             res = [s.encode('utf-8') for s in res]
         except Exception as e:
@@ -564,12 +581,8 @@ class Search(object):
         self.start_line = start
         self.end_line = end
         if query == 'references':
-            # self.get_ref(line, writer)
             self.api = ReferenceSearch()
-        # if data_type == 'serial_title':
-        #     self.get_serial_title('issn', line)
-        if query == 'author':
-            # self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
+        if query == 'author_info':
             self.api = AuthorSearch()
 
     def load_data(self):
@@ -603,12 +616,6 @@ class Search(object):
                     if count > self.end_line:
                         break
                 self.api.get_data(line, writer)
-                # if data_type == 'references':
-                #     self.get_ref(line, writer)
-                # if data_type == 'serial_title':
-                #     self.get_serial_title('issn', line)
-                # if data_type == 'author':
-                #     self.get_authors_by_scopus_eid(line[QUERY_FIELDS_INDEX.get('eid')])
 
 
 if __name__ == '__main__':

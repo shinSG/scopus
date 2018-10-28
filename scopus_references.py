@@ -115,7 +115,8 @@ TITLE_MAPPING = {
         'Document Type', 'ref: subject fields', 'citedby-count', 'issn',
     ],
     'author_info': [
-        'Author ID', 'document-count', 'cited-by-count', 'citation-count', 'Publiction Start', 'Publiction End', 'SubType',
+        'Sum DC', 'DC/au', 'DC/y', 'Sum CBC', 'CBC/au', 'CBC/y', 'Sum CC', 'CC/au', 'CC/y', 'Avg Year', 'au num', 'Author ID', 'document-count', 'au: dc/year', 'cited-by-count', 'au: cbc/year', 'citation-count', 'au: cc/year',
+        'Publiction Start', 'Publiction End', 'SubType',
         'Affiliation Country Current', 'Affiliation Country History'
     ],
     'author_citation': [
@@ -425,6 +426,8 @@ class ReferenceSearch(ScopusAPI):
 
 
 class AuthorSearch(ScopusAPI):
+    ori_extend_num = 11
+
     def get_authors_from_article(self, article_data):
         if not article_data:
             return []
@@ -490,7 +493,7 @@ class AuthorSearch(ScopusAPI):
             }
         return author_info
 
-    def get_authors_by_scopus_eid(self, eid):
+    def get_authors_by_scopus_eid(self, eid, data_length):
         print eid
         resp = self.get_article_info_by_eid(eid)
         results = []
@@ -506,7 +509,7 @@ class AuthorSearch(ScopusAPI):
             if not auid:
                 continue
             try:
-                t = Thread(target=self.get_author_info, args=(auid, results))
+                t = Thread(target=self.get_author_info, args=(auid, results, data_length))
                 t.setDaemon(True)
                 t.start()
                 thread_list.append(t)
@@ -520,22 +523,23 @@ class AuthorSearch(ScopusAPI):
                 continue
         return results
 
-    def get_author_info(self, author_id, res_list):
+    def get_author_info(self, author_id, res_list, data_length):
         if not author_id:
             return
         profile = self.get_author_profile(author_id)
-        # publications = self.get_author_scopus_info(author_id)
-        # return {
-        #     'profile': profile,
-        #     'publications': publications,
-        # }
-        res = [''] * 20
+        res = [''] * (data_length + self.ori_extend_num)
+        year_length = float(profile.get('pub_end', '')) - float(profile.get('pub_start', '')) + 1.0
+        if not year_length:
+            year_length = 1
         try:
             res.extend([
                 profile.get('dc:identifier', ''),
                 profile.get('document-count', ''),
+                str(float(profile.get('document-count', '')) / year_length),
                 profile.get('cited-by-count', ''),
+                str(float(profile.get('cited-by-count', '')) / year_length),
                 profile.get('citation-count', ''),
+                str(float(profile.get('citation-count', '')) / year_length),
                 profile.get('pub_start', ''),
                 profile.get('pub_end', ''),
                 ';'.join(profile.get('sub_areas', [])),
@@ -544,7 +548,7 @@ class AuthorSearch(ScopusAPI):
             ])
             res = [s.encode('utf-8') for s in res]
         except Exception as e:
-            logging.info('[%s EID: %s]: %s' % (datetime.datetime.now(), rid, e))
+            logging.info('[%s AUTHOR_ID: %s]: %s' % (datetime.datetime.now(), author_id, e))
             logging.error(traceback.format_exc())
         res_list.append(res)
         return res_list
@@ -556,14 +560,66 @@ class AuthorSearch(ScopusAPI):
         return resp
 
     def get_data(self, data, writer):
-        res_list = self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')])
+        res_list = self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')], len(data))
+        author_num = len(res_list)
+        y = dc = cbc = cc = 0.0
+        for au in res_list:
+            dc += float(au[len(data) + self.ori_extend_num + 1])
+            cbc += float(au[len(data) + self.ori_extend_num + 3])
+            cc += float(au[len(data) + self.ori_extend_num + 5])
+            y += float(au[len(data) + self.ori_extend_num + 8]) - float(au[len(data) + self.ori_extend_num + 7]) + 1.0
+        if not author_num:
+            author_num = 1
+        if not y:
+            y = 1
+
+        data.extend([
+            str(dc), str(dc/author_num), str(dc/y), str(cbc), str(cbc/author_num), str(cbc/y), str(cc), str(cc/author_num),
+            str(cc / y), str(y/author_num), str(author_num)
+        ])
         try:
             writer.writerow(data)
             writer.writerows(res_list)
         except Exception as e:
             traceback.print_exc()
-            logging.info('[%s]: %s' % (datetime.datetime.now(), src_data))
+            logging.info('[%s]: %s' % (datetime.datetime.now(), data))
             logging.error(traceback.format_exc())
+
+
+class AuthorRef(ScopusAPI):
+
+    def __init__(self):
+        self.author_api = AuthorSearch()
+        self.ref_api = ReferenceSearch()
+        super(AuthorRef, self).__init__()
+
+    def get_author_ref(self, data):
+        res = []
+        data_len = 2
+        authors = self.author_api.get_authors_from_article(data)
+        for au in authors:
+            au_data = [''] * data_len
+            au_info = self.author_api.get_author_profile(auid)
+            au_data.append()
+            res.append()
+
+    def get_author_publication(self):
+        pass
+
+    def get_ref_by_pub(self):
+        pass
+
+    def cal_author(self):
+        pass
+
+    def cal_keywords(self):
+        pass
+
+    def cal_subarea(self):
+        pass
+
+    def get_data(self, data, writer):
+        pass
 
 
 class Search(object):

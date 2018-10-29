@@ -94,11 +94,10 @@ API_KEY = [
 ]
 
 URL_MAPPING = {
-    # 'ScopusSearch': 'content/search/scopus',
+    'ScopusSearch': 'content/search/scopus',
     'serial_title': 'content/serial/title',
     'article_eid': 'content/abstract/eid',
-    # 'AbstractScopus': 'content/abstract/scopus_id',
-    'ScopusSearch': 'content/abstract/scopus_id',
+    'ScopusRetrieval': 'content/abstract/scopus_id',
     'AuthorSearch': 'content/author/author_id'
 }
 
@@ -216,7 +215,7 @@ class ScopusAPI(object):
         bibrecord = data_item.get('bibrecord', {}) or {}
         return bibrecord
 
-    def get_url(self, id='', data_type='ScopusSearch'):
+    def get_url(self, id='', data_type='ScopusRetrieval'):
         url = '/'.join([self.base_url, URL_MAPPING.get(data_type), id])
         return url
 
@@ -241,7 +240,9 @@ class SerialTitleSearch(ScopusAPI):
 
 
 class ReferenceSearch(ScopusAPI):
+
     def get_ref_list_by_eid(self, resp_data):
+
         def get_id(item):
             try:
                 d = item.get('ref-info', {}).get('refd-itemidlist', {}).get('itemid', {})
@@ -321,7 +322,7 @@ class ReferenceSearch(ScopusAPI):
         return ref_info
 
     def get_scopus_info(self, scopus_id):
-        url = self.get_url(scopus_id, 'ScopusSearch')
+        url = self.get_url(scopus_id, 'ScopusRetrieval')
         return self.get_resp(url)
 
     def get_aggregate(self, references):
@@ -488,8 +489,8 @@ class AuthorSearch(ScopusAPI):
                 'first_name': preferred_name.get('given-name', ''),
                 'last_name': preferred_name.get('surname', ''),
                 'index_name': preferred_name.get('indexed-name', ''),
-                'affilication-history': aff_info.get('current', ''),
-                'affilication-current': aff_info.get('history', ''),
+                'affilication-current': aff_info.get('current', ''),
+                'affilication-history': aff_info.get('history', ''),
             }
         return author_info
 
@@ -597,14 +598,25 @@ class AuthorRef(ScopusAPI):
         res = []
         data_len = 2
         authors = self.author_api.get_authors_from_article(data)
-        for au in authors:
+        for auid in authors:
             au_data = [''] * data_len
             au_info = self.author_api.get_author_profile(auid)
-            au_data.append()
-            res.append()
+            au_data.extend([
+                au_info.get('dc:identifier', ''),
+                au_info.get('index_name', ''),
+                au_info.get('affilication-current', ''),
+                ';'.join(au_info.get('sub_areas', [])),
+            ])
+            res.append(au_data)
 
-    def get_author_publication(self):
-        pass
+
+    def get_author_publication(self, author_id):
+        au_pubs = self.author_api.get_author_scopus_info(author_id)
+        for pub in au_pubs:
+
+
+
+
 
     def get_ref_by_pub(self):
         pass

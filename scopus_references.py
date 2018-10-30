@@ -526,7 +526,7 @@ class AuthorSearch(ScopusAPI):
 
     def get_author_info(self, author_id, res_list, data_length):
         if not author_id:
-            return
+            return []
         profile = self.get_author_profile(author_id)
         res = [''] * (data_length + self.ori_extend_num)
         year_length = float(profile.get('pub_end', '')) - float(profile.get('pub_start', '')) + 1.0
@@ -575,8 +575,10 @@ class AuthorSearch(ScopusAPI):
             y = 1
 
         data.extend([
-            str(dc), str(dc/author_num), str(dc/y), str(cbc), str(cbc/author_num), str(cbc/y), str(cc), str(cc/author_num),
-            str(cc / y), str(y/author_num), str(author_num)
+            str(dc), str(dc/author_num), str(dc/y),
+            str(cbc), str(cbc/author_num), str(cbc/y),
+            str(cc), str(cc/author_num), str(cc / y),
+            str(y/author_num), str(author_num)
         ])
         try:
             writer.writerow(data)
@@ -609,14 +611,19 @@ class AuthorRef(ScopusAPI):
             ])
             res.append(au_data)
 
-
     def get_author_publication(self, author_id):
-        au_pubs = self.author_api.get_author_scopus_info(author_id)
+        au_resp = self.author_api.get_author_scopus_info(author_id)
+        au_pubs = au_resp.get('search-results', {}).get('entry', [])
+        pub_info = []
         for pub in au_pubs:
-
-
-
-
+            pub_date = pub.get('prism:coverDate', '').split('-')
+            pub_year = 0
+            if len(pub_date) > 0:
+                pub_year = int(pub_date[0])
+            if search_year and pub_year not in search_year:
+                continue
+            pub_url = pub.get('prism:url', '')
+            pub_info = self.get_resp(pub_url)
 
     def get_ref_by_pub(self):
         pass

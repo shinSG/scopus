@@ -20,77 +20,6 @@ socket.setdefaulttimeout(10.0)
 
 BASE_URL = 'https://api.elsevier.com'
 API_KEY = [
-    'f39255b9bcee3c57c25fcee73fe3b1eb',
-    'c5e8499f9cd003ab7f2491f0994e6aae',
-    '915aa4e98d87db08fc438373ecf6c111',
-    '04a087d08f7eff51e081a07d8e8818c6',
-    'ff09db2296a083be41109ddab506d1bd',
-    'fa23e19c8245d00e3b2c616778dd47ac',
-    'ea957469be9a37c7374843f716da6da5',
-    'f61f798bc06230fac1f1dbd65a947812',
-    '8672a6f512c6844ae11009c62083234b',
-    '63760081141693255fccff56c56601de',
-    '17d75a74353d609b1cf88e15953e7476',
-    'b680ec38b8ee3f7b08cc872980a95f47',
-    '798abcb0627d7d2e5ef8bd52467a241b',
-    '6f9d341e51e371fd28130f9c09de910a',
-    '075458d396d7fd71dc7b261dd5e9843f',
-    '375e902bfc06dc187ae58e422737c194',
-    '491544b1d1875b05f309832020212fae',
-    '8de77bb4d9761abc10b67f72dbc20482',
-    '5e12e963d34cbee4ae0a1943bd3a3ea3',
-    'b262c0592a75f66b52468d50ac3a9a26',
-    'c65b79b4b6de2cacdf88cdd756bf795d',
-    'dba33988d35feb3021c0e9931ff85fd6',
-    '03fc7c9c4913f1d716f07ea17c4af085',
-    'd71b2ae624f0d52002d1ef281d559a25',
-    'c052bfc5ee22625826e6b824d2307631',
-    '7a94350be4db8d485856058ad4ab9f86',
-    'fa022044b782fbf190a8ec448e9899df',
-    '5be6577c1126599a69b08c690c0c52ae',
-    '0e597d281b2d93b39b82716dfc17a8de',
-    '347ac7494dcfd4b1536a6ead0cb3f758',
-    'c06addca9cb36ad68ea16fc519fbfd81',
-    'b67aede30ea8af5a15ef7488eaddf3fb',
-    '93ab950141f1fab6b19305a341dd9981',
-    'c855762680d3ffb0cca63f7a2fb18768',
-    '9751d6306174e054c83414ed5e1fe28d',
-    'd1ae02b0facf9154fec219e9806a55d1',
-    '516a38f61002997fa9296f0314bce5b8',
-    '22bcec8b89ded0aff80e32d1a97c99c5',
-    '555f473aa39077d8fcb2a49530d7874a',
-    '38b92e84e020b48890b27c433756a697',
-    '2bd42b9b5b34b675cf7fd9e07754208a',
-    '42581e88115978e1a9e4e0ca03485904',
-    '8f435b5326a47024cd5706e2971ca891',
-    'dace6b7365c0a83861e5d8c83f41131e',
-    'd75b338eb9ea21990873bc2130008875',
-    '1dc24671c3f1f73e41bd30fac5798949',
-    'fcacf0d3b42ca665079af50052a35ed3',
-    '36391cf22e6e523b0081eef679a27ae8',
-    '1e2922ffe08765518081f0d75161eb84',
-    '5a9423d1e5172f941543177542cfbb57',
-    '51e0ce7155124182a1b0099b71b8f6a7',
-    '5388631052a301e869e7bc78f7abf96d',
-    '6048a7c1bdbe04791eda89ccbacc6121',
-    '8d769014358a38ad12d797260560359d',
-    '900e0a75bc1d99218027b1ff661d3e4a',
-    '84f60d706011e5127c6f697ea4af2e50',
-    'e6b8ba28b0dcab1d7098e635bbf28595',
-    'be9a5ee85995687e5c73b4dade005f18',
-    'c2f2fbc63369236590811ed1109cc17d',
-    '66a9efc9bfc7723ecbad6b7402173000',
-    'b826194a1b11adb9aa3a21919e7642ac',
-    '19d902e73182b6f061b27141a4dfefbe',
-    '9abe1b8202ce4d51751fe8577cf013a1',
-    '1c2fa5c22295164647d6fb879b1b8172',
-    '6757f56a44c489280f4a8cdbe5648c5f',
-    'fc502b10d8ea42110f88c133d3783b6c',
-    '26b386724c465bf301895cfb424ec0cd',
-    'e0f47588b1c44ac827108a0b05c28819',
-    'f764990922b47fdb028fcf513d4a040d',
-    '767594361ac4c640ff598d94dcbecd37',
-    '8c32fbff69e7e4e05f124d69d7ab2c54',
 ]
 
 URL_MAPPING = {
@@ -224,6 +153,11 @@ class ScopusAPI(object):
         scopus_id = li[-1] if len(li) == 2 else ''
         return scopus_id
 
+    def get_head(self, resp_data):
+        bibrecord = self.get_scoups_bibrecord(resp_data)
+        head = bibrecord.get('head', {})
+        return head
+
 
 class SerialTitleSearch(ScopusAPI):
     def get_serial_title(self, query_field, line):
@@ -272,11 +206,16 @@ class ReferenceSearch(ScopusAPI):
             data = self.get_ref_list_by_eid(resp)
         return data
 
-    def get_ref_info(self, r_scopus_id):
+    def get_author_keywords(self, head_data):
+        citation_info = head_data.get('citation-info', {})
+        keywords = citation_info.get('author-keywords', {}).get('author-keyword', [])
+        return [kw.get('$', '') for kw in keywords]
+
+    def get_scopus_info(self, scopus_id):
         ref_info = {}
-        if not r_scopus_id:
+        if not scopus_id:
             return None
-        data = self.get_scopus_info(r_scopus_id)
+        data = self.get_scopus_origin_data(scopus_id)
         if data:
             data = data.get('abstracts-retrieval-response', {})
             affiliation = data.get('affiliation', [])
@@ -285,6 +224,7 @@ class ReferenceSearch(ScopusAPI):
             aff_country = ','.join(list(set([aff.get('affiliation-country') for aff in affiliation])))
             core_data = data.get('coredata', {})
             sub_fields = ','.join(self.get_sub_areas(data))
+            head_data = self.get_head(data)
             ref_year = 1900
             try:
                 ref_year = datetime.datetime.strptime(core_data.get('prism:coverDate', ''), '%Y-%m-%d').year
@@ -317,11 +257,13 @@ class ReferenceSearch(ScopusAPI):
                 'startingPage': core_data.get('prism:startingPage', ''),
                 'scopus_id': core_data.get('dc:identifier', ''),
                 'publisher': core_data.get('dc:publisher', ''),
+                'author_keywords': core_data.get('dc:publisher', ''),
                 'creator': ','.join([a.get('ce:indexed-name', '') for a in core_data.get('dc:creator', {}).get('author', [])]),
+                'author_words': self.get_author_keywords(head_data)
             }
         return ref_info
 
-    def get_scopus_info(self, scopus_id):
+    def get_scopus_origin_data(self, scopus_id):
         url = self.get_url(scopus_id, 'ScopusRetrieval')
         return self.get_resp(url)
 
@@ -345,7 +287,7 @@ class ReferenceSearch(ScopusAPI):
         ref_info = {}
         res = []
         try:
-            ref_info = self.get_ref_info(rid)
+            ref_info = self.get_scopus_info(rid)
             res = [''] * 21
             res.extend([
                 ref_info.get('title', '') or ref_info.get('publicationName', ''),
@@ -494,7 +436,7 @@ class AuthorSearch(ScopusAPI):
             }
         return author_info
 
-    def get_authors_by_scopus_eid(self, eid, data_length):
+    def get_authors_by_scopus_eid(self, eid):
         print eid
         resp = self.get_article_info_by_eid(eid)
         results = []
@@ -510,7 +452,7 @@ class AuthorSearch(ScopusAPI):
             if not auid:
                 continue
             try:
-                t = Thread(target=self.get_author_info, args=(auid, results, data_length))
+                t = Thread(target=self.get_author_info, args=(auid, results))
                 t.setDaemon(True)
                 t.start()
                 thread_list.append(t)
@@ -524,11 +466,11 @@ class AuthorSearch(ScopusAPI):
                 continue
         return results
 
-    def get_author_info(self, author_id, res_list, data_length):
+    def get_author_info(self, author_id, res_list):
         if not author_id:
             return []
         profile = self.get_author_profile(author_id)
-        res = [''] * (data_length + self.ori_extend_num)
+        res = []
         year_length = float(profile.get('pub_end', '')) - float(profile.get('pub_start', '')) + 1.0
         if not year_length:
             year_length = 1
@@ -561,7 +503,11 @@ class AuthorSearch(ScopusAPI):
         return resp
 
     def get_data(self, data, writer):
-        res_list = self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')], len(data))
+        au = self.get_authors_by_scopus_eid(data[QUERY_FIELDS_INDEX.get('eid')])
+        res_list = []
+        space = [''] * (len(data) + self.ori_extend_num)
+        for res in au:
+            res_list.append(space.extend(res))
         author_num = len(res_list)
         y = dc = cbc = cc = 0.0
         for au in res_list:
@@ -611,6 +557,11 @@ class AuthorRef(ScopusAPI):
             ])
             res.append(au_data)
 
+    def get_citation_resp(self, scopus_id, res_list):
+        pub_data = self.ref_api.get_scopus_info(scopus_id)
+
+
+
     def get_author_publication(self, author_id):
         au_resp = self.author_api.get_author_scopus_info(author_id)
         au_pubs = au_resp.get('search-results', {}).get('entry', [])
@@ -623,7 +574,8 @@ class AuthorRef(ScopusAPI):
             if search_year and pub_year not in search_year:
                 continue
             pub_url = pub.get('prism:url', '')
-            pub_info = self.get_resp(pub_url)
+            pub_res_data = []
+            pub_thread = Thread(target=self.get_resp, args=(pub_url,))
 
     def get_ref_by_pub(self):
         pass

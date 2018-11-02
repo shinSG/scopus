@@ -545,22 +545,20 @@ class AuthorRef(ScopusAPI):
     def get_author_ref(self, data):
         res = []
         data_len = 2
-        authors = self.author_api.get_authors_from_article(data)
-        for auid in authors:
+        authors = self.author_api.get_authors_by_scopus_eid(data)
+        for au in authors:
+            au_id = au.get('dc:identifier', '')
             au_data = [''] * data_len
-            au_info = self.author_api.get_author_profile(auid)
             au_data.extend([
-                au_info.get('dc:identifier', ''),
-                au_info.get('index_name', ''),
-                au_info.get('affilication-current', ''),
-                ';'.join(au_info.get('sub_areas', [])),
+                au.get('dc:identifier', ''),
+                au.get('index_name', ''),
+                au.get('affilication-current', ''),
+                ';'.join(au.get('sub_areas', [])),
             ])
             res.append(au_data)
 
     def get_citation_resp(self, scopus_id, res_list):
         pub_data = self.ref_api.get_scopus_info(scopus_id)
-
-
 
     def get_author_publication(self, author_id):
         au_resp = self.author_api.get_author_scopus_info(author_id)
@@ -576,6 +574,10 @@ class AuthorRef(ScopusAPI):
             pub_url = pub.get('prism:url', '')
             pub_res_data = []
             pub_thread = Thread(target=self.get_resp, args=(pub_url,))
+
+    def get_scopus_data(self, scopus_id, data_list):
+        scopus_res = self.ref_api.get_scopus_info(scopus_id)
+
 
     def get_ref_by_pub(self):
         pass
